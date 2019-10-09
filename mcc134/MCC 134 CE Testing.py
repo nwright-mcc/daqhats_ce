@@ -11,7 +11,8 @@
 from daqhats import mcc134, TcTypes
 from tkinter import *
 import datetime
-#from tkinter import messagebox
+from tkinter import messagebox
+import os
 #import tkinter.font
 
 DEFAULT_TC_LIMIT = 20.0    # uV
@@ -70,6 +71,7 @@ class ControlApp:
         self.software_errors = 0
         self.baseline_set = False
         self.watchdog_count = 0
+        self.csvfile = None
 
         # GUI Setup
 
@@ -277,7 +279,9 @@ class ControlApp:
         # Stop the test loop
         if self.id:
             self.master.after_cancel(self.id)
-        self.csvfile.close()
+        if self.csvfile:
+            self.csvfile.close()
+            self.csvfile = None
     
     def resetTest(self):
         # Reset the error counters and restart
@@ -288,7 +292,9 @@ class ControlApp:
         if self.pass_id:
             self.master.after_cancel(self.pass_id)
 
-        self.csvfile.close()
+        if self.csvfile:
+            self.csvfile.close()
+            self.csfvile = None
             
         self.board = None
         self.device_open = False
@@ -325,13 +331,13 @@ class ControlApp:
                 self.baseline_set = True
                 self.watchdog_count = 0
                 
-                self.updateDisplay()
-
                 # Create csv file with current date/time in file name
                 self.openCsvFile()
-                
+
                 # go to the test loop
                 self.id = self.master.after(1000, self.updateInputs)
+            except FileNotFoundError:
+                messagebox.showerror("Error", "Cannot create CSV file")
             except:
                 self.software_errors += 1
                 self.current_failures += 1
@@ -339,6 +345,8 @@ class ControlApp:
                 
                 # try again
                 self.id = self.master.after(1000, self.establishBaseline)
+                
+            self.updateDisplay()
         else:
             # Open the device
             self.initBoard()
@@ -346,7 +354,10 @@ class ControlApp:
             self.id = self.master.after(500, self.establishBaseline)
         
     def openCsvFile(self):
-        filename = "data/test_" + datetime.datetime.now().strftime(
+        if not os.path.isdir('./data'):
+            # create the data directory
+            os.mkdir('./data')
+        filename = "./data/mcc134_test_" + datetime.datetime.now().strftime(
             "%d-%m-%Y_%H-%M-%S") + ".csv"
         self.csvfile = open(filename, 'w')
         
@@ -387,6 +398,7 @@ class ControlApp:
                         if (cjc_error > self.cjc_limit) or (cjc_error < -self.cjc_limit):
                             self.current_failures += 1
                             self.cjc_failures[channel] += 1
+                            
                 logstr += (",".join(
                                "{:.1f}".format(value) for value in self.tc_voltages) +
                            "," + ",".join(
@@ -402,14 +414,14 @@ class ControlApp:
             self.csvfile.write(logstr)
             self.test_count += 1
             self.updateDisplay()
-            
+
             if (self.watchdog_check.var.get() == 1 and
                 self.watchdog_count >= 5):
-                    self.board = None
-                    self.device_open = False
-                    self.watchdog_count = 0
-                    self.ready_led.set(0)
-                    self.master.after(500, self.updateInputs)
+                self.board = None
+                self.device_open = False
+                self.watchdog_count = 0
+                self.ready_led.set(0)
+                self.master.after(500, self.updateInputs)
             else:
                 # schedule another update in 1 s
                 self.id = self.master.after(1000, self.updateInputs)
@@ -462,7 +474,9 @@ class ControlApp:
         if self.pass_id:
             self.master.after_cancel(self.pass_id)
         self.device_open = False
-        self.csvfile.close()
+        if self.csvfile:
+            self.csvfile.close()
+            self.csvfile = None
         self.master.destroy()
 
 
