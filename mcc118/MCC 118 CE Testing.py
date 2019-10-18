@@ -15,7 +15,7 @@ from tkinter import messagebox
 import os
 #import tkinter.font
 
-DEFAULT_V_LIMIT = 11.0    # mV
+DEFAULT_V_LIMIT = 25.0    # mV
 SCAN_SAMPLE_COUNT = 10000
 SCAN_RATE = 12500         # Hz
 
