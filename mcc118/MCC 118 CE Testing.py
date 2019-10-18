@@ -8,7 +8,7 @@
     Description:
         This app reads and displays the input voltages.
 """
-from daqhats import mcc118
+from daqhats import mcc118, OptionFlags
 from tkinter import *
 import datetime
 from tkinter import messagebox
@@ -16,6 +16,8 @@ import os
 #import tkinter.font
 
 DEFAULT_V_LIMIT = 11.0    # mV
+SCAN_SAMPLE_COUNT = 10000
+SCAN_RATE = 12500         # Hz
 
 class LED(Frame):
     def __init__(self, parent, size=10, **options):
@@ -249,6 +251,10 @@ class ControlApp:
             
             self.current_failures = 0
             try:
+                # Start the first scan
+                self.board.a_in_scan_start(
+                    0xFF, SCAN_SAMPLE_COUNT, SCAN_RATE, 0)
+                
                 self.baseline_set = True
                 self.watchdog_count = 0
                 
@@ -295,25 +301,45 @@ class ControlApp:
             
             self.current_failures = 0
             logstr = datetime.datetime.now().strftime("%H:%M:%S") + ","
+            
             try:
+                # Read the last scan data
+                read_result = self.board.a_in_scan_read(SCAN_SAMPLE_COUNT, -1)
+                
+                # Calculate averages
+                averages = [0.0]*mcc118.info().NUM_AI_CHANNELS
+                for index in range(SCAN_SAMPLE_COUNT):
+                    for channel in range(mcc118.info().NUM_AI_CHANNELS):
+                        averages[channel] += read_result.data[
+                            index*mcc118.info().NUM_AI_CHANNELS + channel]
+                        
                 for channel in range(mcc118.info().NUM_AI_CHANNELS):
-                    # read the voltage value
-                    self.voltages[channel] = self.board.a_in_read(channel) * 1e3
+                    averages[channel] /= SCAN_SAMPLE_COUNT
+                    self.voltages[channel] = averages[channel]*1e3
                     
-                    self.watchdog_count = 0
-                    
-                    if self.baseline_set == True:
-                        # compare to limits
-                        voltage = self.voltages[channel]
-                        if (voltage > self.voltage_limit) or (voltage < -self.voltage_limit):
-                            self.current_failures += 1
-                            self.failures[channel] += 1
+                self.board.a_in_scan_cleanup()
+
+                # Start the next scan
+                self.board.a_in_scan_start(
+                    0xFF, SCAN_SAMPLE_COUNT, SCAN_RATE, 0)
+                
+                self.watchdog_count = 0
+                   
+                if self.baseline_set == True:
+                    # compare to limits
+                    voltage = self.voltages[channel]
+                    if (voltage > self.voltage_limit) or (voltage < -self.voltage_limit):
+                        self.current_failures += 1
+                        self.failures[channel] += 1
                             
                 logstr += (",".join(
                                "{:.1f}".format(value) for value in self.voltages) +
                            ",\n")
                 
             except:
+                self.board.a_in_scan_stop()
+                self.board.a_in_scan_cleanup()
+
                 self.software_errors += 1
                 self.current_failures += 1
                 self.watchdog_count += 1
@@ -367,6 +393,9 @@ class ControlApp:
         
     # Event handlers
     def close(self):
+        self.board.a_in_scan_stop()
+        self.board.a_in_scan_cleanup()
+        
         if self.id:
             self.master.after_cancel(self.id)
         if self.activity_id:
