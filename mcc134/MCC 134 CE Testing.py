@@ -289,8 +289,8 @@ class ControlApp:
             self.master.after_cancel(self.id)
         if self.activity_id:
             self.master.after_cancel(self.activity_id)
-        if self.pass_id:
-            self.master.after_cancel(self.pass_id)
+        #if self.pass_id:
+        #    self.master.after_cancel(self.pass_id)
 
         if self.csvfile:
             self.csvfile.close()
@@ -451,15 +451,15 @@ class ControlApp:
             self.pass_led.set(2)
         else:
             self.inst_pass_led.set(1)
-        self.pass_id = self.master.after(500, self.passBlink)
+        #self.pass_id = self.master.after(500, self.passBlink)
             
         self.software_error_label.config(
             text="{}".format(self.software_errors))
         self.test_count_label.config(text="{}".format(self.test_count))
 
-    def passBlink(self):
-        self.pass_id = None
-        self.inst_pass_led.set(0)
+    #def passBlink(self):
+    #    self.pass_id = None
+    #    self.inst_pass_led.set(0)
         
     def activityBlink(self):
         self.activity_id = None
@@ -471,8 +471,8 @@ class ControlApp:
             self.master.after_cancel(self.id)
         if self.activity_id:
             self.master.after_cancel(self.activity_id)
-        if self.pass_id:
-            self.master.after_cancel(self.pass_id)
+        #if self.pass_id:
+        #    self.master.after_cancel(self.pass_id)
         self.device_open = False
         if self.csvfile:
             self.csvfile.close()
