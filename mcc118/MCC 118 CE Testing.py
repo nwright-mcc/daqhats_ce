@@ -8,11 +8,13 @@
     Description:
         This app reads and displays the input voltages.
 """
-from daqhats import mcc118, OptionFlags
+from daqhats import mcc118
 from tkinter import *
 import datetime
 from tkinter import messagebox
 import os
+#from tkinter import ttk
+from tkinter.ttk import *
 #import tkinter.font
 
 DEFAULT_V_LIMIT = 25.0    # mV
@@ -68,6 +70,11 @@ class ControlApp:
         self.baseline_set = False
         self.watchdog_count = 0
         self.csvfile = None
+        self.id = None
+        self.activity_id = None
+        self.num_channels = mcc118.info().NUM_AI_CHANNELS
+        self.scan_rate = SCAN_RATE
+        self.scan_count = SCAN_SAMPLE_COUNT
 
         # GUI Setup
 
@@ -75,7 +82,7 @@ class ControlApp:
         self.device_frame = LabelFrame(master, text="Device status")
         #self.device_frame.pack(side=TOP, expand=False, fill=X)
         self.device_frame.grid(row=0, column=0, padx=3, pady=3,
-                               sticky="NSEW")
+                               sticky="NEW")
         
         # Device widgets
         label = Label(self.device_frame, text="Serial number:")
@@ -88,7 +95,7 @@ class ControlApp:
         label = Label(self.device_frame, text="Software errors:")
         label.grid(row=1, column=0, padx=3, pady=3, sticky="E")
         self.software_error_label = Label(
-            self.device_frame, width=8, text="0", relief=SUNKEN)
+            self.device_frame, width=8, text="0", relief=SUNKEN, anchor=E)
         self.software_error_label.grid(row=1, column=1, padx=3, pady=3,
                                        ipadx=2, ipady=2)
 
@@ -107,40 +114,67 @@ class ControlApp:
         
         
         # Test Frame
-        self.test_frame = LabelFrame(master, text="Test status")
-        self.test_frame.grid(row=0, column=1, columnspan=2,
-                             sticky="NSEW", padx=3, pady=3)
+        self.test_frame = LabelFrame(master, text="Test setup")
+        self.test_frame.grid(row=0, column=1, rowspan=2,
+                             sticky="NEW", padx=3, pady=3)
 
         # Test widgets
-        label = Label(self.test_frame, text="Pass/fail (latch):")
+        label = Label(self.test_frame, text="# Channels:")
         label.grid(row=0, column=0, padx=3, pady=3, sticky="E")
-        self.pass_led = LED(self.test_frame, size=20)
-        self.pass_led.grid(row=0, column=1, padx=3, pady=3)
-
-        label = Label(self.test_frame, text="Pass/fail (inst):")
+        chan_values = ['1', '2', '3', '4', '5', '6', '7', '8']
+        self.chan_combo = Combobox(self.test_frame, values=chan_values, width=8,
+                                   justify="right")
+        self.chan_combo.set('8')
+        self.chan_combo.bind("<<ComboboxSelected>>", self.channelsChanged)
+        self.chan_combo.grid(row=0, column=1, 
+                             padx=3, pady=3, sticky="NSEW")
+        
+        self.start_button = Button(self.test_frame, text="Start", 
+                                  command=self.startTest)
+        self.start_button.grid(row=0, column=2, padx=3, pady=3)
+        
+        label = Label(self.test_frame, text="Sample rate:")
         label.grid(row=1, column=0, padx=3, pady=3, sticky="E")
-        self.inst_pass_led = LED(self.test_frame, size=20)
-        self.inst_pass_led.grid(row=1, column=1, padx=3, pady=3)
+        self.sample_rate = IntVar(value=12500)
+        self.sample_rate_widget = Spinbox(
+            self.test_frame, from_=1, to=12500, width=8,
+            textvariable=self.sample_rate, justify="right")
+        self.sample_rate_widget.grid(row=1, column=1, padx=3, pady=3, sticky="NSEW")
 
-        label = Label(self.test_frame, text="Test count:")
-        label.grid(row=0, column=2, padx=3, pady=3, sticky="E")
-        self.test_count_label = Label(self.test_frame, width=8,
-                                      text="0", relief=SUNKEN)
-        self.test_count_label.grid(row=0, column=3, padx=3, pady=3)
-        
-        self.stop_button = Button(self.test_frame, text="Stop", fg="red",
-                                  command=self.stopTest)
-        self.stop_button.grid(row=0, column=4, padx=3, pady=3, sticky="NSEW")
-        self.reset_button = Button(self.test_frame, text="Reset",
-                                   command=self.resetTest)
-        self.reset_button.grid(row=1, column=4, padx=3, pady=3, sticky="NSEW")
-        
+        style = Style()
+        style.configure("C.TButton", foreground='red')
+        self.stop_button = Button(self.test_frame, text="Stop", style="C.TButton", #foreground="red",
+                                  command=self.stopTest, state=DISABLED)
+        self.stop_button.grid(row=1, column=2, padx=3, pady=3, sticky="NSEW")
+
         v = IntVar()
         self.watchdog_check = Checkbutton(
             self.test_frame, text="Use watchdog", variable=v)
         self.watchdog_check.var = v
-        self.watchdog_check.grid(row=1, column=2, columnspan=2, padx=3, pady=3,
-                                 sticky="W")
+        self.watchdog_check.grid(row=2, column=0, columnspan=2, padx=3, pady=3,
+                                 sticky="E")
+
+        self.reset_button = Button(self.test_frame, text="Reset",
+                                   command=self.resetTest)
+        self.reset_button.grid(row=2, column=2, padx=3, pady=3, sticky="NSEW")
+
+
+        label = Label(self.test_frame, text="Pass/fail (latch):")
+        label.grid(row=3, column=0, padx=3, pady=3, sticky="E")
+        self.pass_led = LED(self.test_frame, size=20)
+        self.pass_led.grid(row=3, column=1, padx=3, pady=3)
+
+        label = Label(self.test_frame, text="Pass/fail (inst):")
+        label.grid(row=4, column=0, padx=3, pady=3, sticky="E")
+        self.inst_pass_led = LED(self.test_frame, size=20)
+        self.inst_pass_led.grid(row=4, column=1, padx=3, pady=3)
+
+        label = Label(self.test_frame, text="Test count:")
+        label.grid(row=5, column=0, padx=3, pady=3, sticky="E")
+        self.test_count_label = Label(self.test_frame, width=8,
+                                      text="0", relief=SUNKEN, anchor=E)
+        self.test_count_label.grid(row=5, column=1, padx=3, pady=3)
+        
 
         # Voltage Frame
         self.volt_frame = LabelFrame(master, text="Voltage Inputs, mV")
@@ -190,7 +224,7 @@ class ControlApp:
 
         self.pass_led.set(1)
 
-        self.master.after(500, self.establishBaseline)
+        #self.master.after(500, self.establishBaseline)
 
     def initBoard(self):
         # Try to initialize the device
@@ -206,6 +240,23 @@ class ControlApp:
             self.software_errors += 1
             self.current_failures += 1
    
+    def startTest(self):
+        self.resetTest()
+        # get control values
+        self.scan_rate = self.sample_rate.get()
+        self.scan_count = int(self.scan_rate / 2)
+        if self.scan_count == 0:
+            self.scan_count = 1
+        
+        self.master.after(500, self.establishBaseline)
+        # disable controls
+        self.start_button.configure(state=DISABLED)
+        self.reset_button.configure(state=DISABLED)
+        self.stop_button.configure(state=NORMAL)
+        self.chan_combo.configure(state=DISABLED)
+        self.sample_rate_widget.configure(state=DISABLED)
+        self.watchdog_check.configure(state=DISABLED)
+    
     def stopTest(self):
         # Stop the test loop
         if self.id:
@@ -213,6 +264,14 @@ class ControlApp:
         if self.csvfile:
             self.csvfile.close()
             self.csvfile = None
+        self.ready_led.set(0)
+        # enable controls
+        self.start_button.configure(state=NORMAL)
+        self.reset_button.configure(state=NORMAL)
+        self.stop_button.configure(state=DISABLED)
+        self.chan_combo.configure(state=NORMAL)
+        self.sample_rate_widget.configure(state=NORMAL)
+        self.watchdog_check.configure(state=NORMAL)
     
     def resetTest(self):
         # Reset the error counters and restart
@@ -239,21 +298,39 @@ class ControlApp:
         self.inst_pass_led.set(0)
 
         self.ready_led.set(0)
-        self.master.after(500, self.establishBaseline)
+        #self.master.after(500, self.establishBaseline)
     
+    def channelsChanged(self, _event):
+        self.num_channels = int(self.chan_combo.get())
+        # enable/disable controls
+        for index in range(0, self.num_channels):
+            self.voltage_labels[index].configure(state=NORMAL)
+            self.failure_labels[index].configure(state=NORMAL)
+        for index in range(self.num_channels, mcc118.info().NUM_AI_CHANNELS):
+            self.voltage_labels[index].configure(state=DISABLED)
+            self.failure_labels[index].configure(state=DISABLED)
+            
+        # set new sample rate max
+        rate_max = int(100000/self.num_channels)
+        self.sample_rate_widget.configure(to=rate_max)
+        if self.sample_rate.get() > rate_max:
+            self.sample_rate.set(rate_max)
+        
     def establishBaseline(self):
         self.id = None
         self.current_failures = 0
         
         if self.device_open:
             self.activity_led.set(1)
+            self.master.update()
             self.activity_id = self.master.after(100, self.activityBlink)
             
             self.current_failures = 0
             try:
                 # Start the first scan
+                chan_mask = 2**self.num_channels - 1
                 self.board.a_in_scan_start(
-                    0xFF, SCAN_SAMPLE_COUNT, SCAN_RATE, 0)
+                    chan_mask, self.scan_count, self.scan_rate, 0)
                 
                 self.baseline_set = True
                 self.watchdog_count = 0
@@ -297,6 +374,7 @@ class ControlApp:
         self.id = None
         if self.device_open:
             self.activity_led.set(1)
+            self.master.update()
             self.activity_id = self.master.after(100, self.activityBlink)
             
             self.current_failures = 0
@@ -304,36 +382,36 @@ class ControlApp:
             
             try:
                 # Read the last scan data
-                read_result = self.board.a_in_scan_read(SCAN_SAMPLE_COUNT, -1)
+                read_result = self.board.a_in_scan_read(self.scan_count, -1)
                 
                 # Calculate averages
-                averages = [0.0]*mcc118.info().NUM_AI_CHANNELS
-                for index in range(SCAN_SAMPLE_COUNT):
-                    for channel in range(mcc118.info().NUM_AI_CHANNELS):
+                averages = [0.0]*self.num_channels
+                for index in range(self.scan_count):
+                    for channel in range(self.num_channels):
                         averages[channel] += read_result.data[
-                            index*mcc118.info().NUM_AI_CHANNELS + channel]
+                            index*self.num_channels + channel]
                         
-                for channel in range(mcc118.info().NUM_AI_CHANNELS):
-                    averages[channel] /= SCAN_SAMPLE_COUNT
+                for channel in range(self.num_channels):
+                    averages[channel] /= self.scan_count
                     self.voltages[channel] = averages[channel]*1e3
+                    if self.baseline_set == True:
+                        # compare to limits
+                        if ((self.voltages[channel] > self.voltage_limit) or
+                                (self.voltages[channel] < -self.voltage_limit)):
+                            self.current_failures += 1
+                            self.failures[channel] += 1
                     
                 self.board.a_in_scan_cleanup()
 
                 # Start the next scan
+                chan_mask = 2**self.num_channels - 1
                 self.board.a_in_scan_start(
-                    0xFF, SCAN_SAMPLE_COUNT, SCAN_RATE, 0)
+                    chan_mask, self.scan_count, self.scan_rate, 0)
                 
                 self.watchdog_count = 0
-                   
-                if self.baseline_set == True:
-                    # compare to limits
-                    voltage = self.voltages[channel]
-                    if (voltage > self.voltage_limit) or (voltage < -self.voltage_limit):
-                        self.current_failures += 1
-                        self.failures[channel] += 1
                             
                 logstr += (",".join(
-                               "{:.1f}".format(value) for value in self.voltages) +
+                               "{:.1f}".format(value) for value in self.voltages[:self.num_channels]) +
                            ",\n")
                 
             except:
@@ -393,8 +471,9 @@ class ControlApp:
         
     # Event handlers
     def close(self):
-        self.board.a_in_scan_stop()
-        self.board.a_in_scan_cleanup()
+        if self.board:
+            self.board.a_in_scan_stop()
+            self.board.a_in_scan_cleanup()
         
         if self.id:
             self.master.after_cancel(self.id)
