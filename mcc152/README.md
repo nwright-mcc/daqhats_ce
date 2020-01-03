@@ -41,7 +41,7 @@ These instructions describe how to set up the GPIB software.
    ```sh
    cd ../linux-gpib-user
    ./bootstrap
-   ./configure
+   ./configure --sysconfdir=/etc
    make
    make install
    ldconfig
