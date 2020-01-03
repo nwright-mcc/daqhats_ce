@@ -44,9 +44,10 @@ These instructions describe how to set up the GPIB software.
    ./configure
    make
    make install
+   ldconfig
    cp util/templates/gpib.conf /usr/local/etc/gpib.conf
    ```
-7. Verify driver install.
+7. Ensure the USB GPIB interface is connected to USB then verify driver install.
    ```sh
    lsusb
    ```
@@ -64,7 +65,7 @@ These instructions describe how to set up the GPIB software.
 11. Verify that gpib_config runs without errors.
 12. Add /usr/local/sbin/gpib_config to /etc/rc.local so it runs during every
     boot.
-13. Reboot
+13. Reboot (exiting root mode)
 14. Connect the DMM at address 5 to the GPIB interface, then use
     ibtest to verify operation.
     ```
@@ -84,7 +85,7 @@ These instructions describe how to set up the GPIB software.
     cd ~/linux-gpib/linux-gpib-code/linux-gpib-user/language/python
     sudo python ./setup.py install
     ```
-16. Perform a python test.
+16. Perform a python test using the following python code.
     ```python
     import sys
     import Gpib
