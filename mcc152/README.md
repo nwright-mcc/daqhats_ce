@@ -83,7 +83,7 @@ These instructions describe how to set up the GPIB software.
     ```sh
     sudo apt install -y python-dev
     cd ~/linux-gpib/linux-gpib-code/linux-gpib-user/language/python
-    sudo python ./setup.py install
+    sudo python3 ./setup.py install
     ```
 16. Perform a python test using the following python code.
     ```python
