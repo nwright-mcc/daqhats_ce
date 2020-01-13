@@ -19,7 +19,7 @@ import random
 from tkinter.ttk import *
 #import tkinter.font
 
-DEFAULT_V_LIMIT = 45.0 * 5000 / 4096   # mV
+DEFAULT_V_LIMIT = 50   # mV
 
 #******************************************************************************
 # HP 34401A DMM
