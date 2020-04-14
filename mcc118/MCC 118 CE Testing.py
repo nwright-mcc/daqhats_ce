@@ -380,6 +380,8 @@ class ControlApp:
             self.current_failures = 0
             logstr = datetime.datetime.now().strftime("%H:%M:%S") + ","
             
+            error = False
+            
             try:
                 # Read the last scan data
                 read_result = self.board.a_in_scan_read(self.scan_count, -1)
@@ -400,6 +402,20 @@ class ControlApp:
                                 (self.voltages[channel] < -self.voltage_limit)):
                             self.current_failures += 1
                             self.failures[channel] += 1
+                            error = True
+
+                if error:
+                    #print(read_result.running, read_result.hardware_overrun, read_result.buffer_overrun)
+                    """
+                    testfile = open("err.csv", "w+")
+                    for index in range(self.scan_count):
+                        errstr = (",".join(
+                               "{:.4f}".format(value) for value in read_result.data[
+                                   index*self.num_channels:index*self.num_channels+self.num_channels]) +
+                           ",\n")
+                        testfile.write(errstr)
+                    testfile.close()
+                    """        
                     
                 self.board.a_in_scan_cleanup()
 

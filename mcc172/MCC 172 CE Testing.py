@@ -8,7 +8,7 @@
     Description:
         This app reads and displays the input voltages.
 """
-from daqhats import mcc172, SourceType
+from daqhats import mcc172, SourceType, TriggerModes, OptionFlags
 from tkinter import *
 import datetime
 from tkinter import messagebox
@@ -20,7 +20,7 @@ from tkinter.ttk import *
 #import tkinter.font
 
 DEFAULT_V_LIMIT = 4.985    # mV
-SCAN_SAMPLE_COUNT = 25600
+SCAN_SAMPLE_COUNT = 20000
 SCAN_RATE = 51200         # Hz
 
 class LED(Frame):
@@ -67,7 +67,10 @@ class ControlApp:
         self.voltage_limit = DEFAULT_V_LIMIT
         self.voltages = [0.0]*mcc172.info().NUM_AI_CHANNELS
         self.failures = [0]*mcc172.info().NUM_AI_CHANNELS
+        self.current_failures = 0
         self.test_count = 0
+        self.trigger_errors = 0
+        self.last_trigger_error = False
         self.software_errors = 0
         self.baseline_set = False
         self.watchdog_count = 0
@@ -164,7 +167,7 @@ class ControlApp:
         # Voltage Frame
         self.volt_frame = LabelFrame(master, text="Voltage Inputs, mV")
         #self.tc_frame.pack(side=BOTTOM, expand=True, fill=BOTH)
-        self.volt_frame.grid(row=1, column=0, sticky="NSEW", padx=3, pady=3)
+        self.volt_frame.grid(row=1, column=0, rowspan=2, sticky="NSEW", padx=3, pady=3)
 
         # Voltage widgets
         label = Label(self.volt_frame, text="Limit: ±")
@@ -202,6 +205,17 @@ class ControlApp:
                                             pady=3, ipadx=2, ipady=2)
             
             
+        # Trigger Frame
+        self.trigger_frame = LabelFrame(master, text="Trigger Input")
+        self.trigger_frame.grid(row=2, column=1, sticky="NSEW", padx=3, pady=3)
+
+        label = Label(self.trigger_frame, text="Failures:")
+        label.grid(row=0, column=0, padx=3, pady=3, sticky="E")
+        self.trigger_error_label = Label(
+            self.trigger_frame, width=8, text="0", relief=SUNKEN, anchor=E)
+        self.trigger_error_label.grid(row=0, column=1, padx=3, pady=3,
+                                      ipadx=2, ipady=2)
+
         master.protocol('WM_DELETE_WINDOW', self.close) # exit cleanup
 
         icon = PhotoImage(file='/usr/share/mcc/daqhats/icon.png')
@@ -230,6 +244,8 @@ class ControlApp:
                 stat = self.board.a_in_clock_config_read()
                 sync = stat.synchronized
                 sleep(0.1)
+
+            self.board.trigger_config(SourceType.LOCAL, TriggerModes.RISING_EDGE)
             
             self.ready_led.set(1)
             self.device_open = True
@@ -280,12 +296,16 @@ class ControlApp:
         self.failures = [0]*mcc172.info().NUM_AI_CHANNELS
         self.test_count = 0
         self.software_errors = 0
+        self.trigger_errors = 0
+        self.last_trigger_error = False
         self.baseline_set = False
         self.watchdog_count = 0
         self.pass_led.set(1)
         self.inst_pass_led.set(0)
 
         self.ready_led.set(0)
+        
+        self.updateDisplay()
         #self.master.after(500, self.establishBaseline)
             
     def establishBaseline(self):
@@ -311,7 +331,7 @@ class ControlApp:
                 self.openCsvFile()
 
                 # go to the test loop
-                self.id = self.master.after(1000, self.updateInputs)
+                self.id = self.master.after(500, self.updateInputs)
             except FileNotFoundError:
                 messagebox.showerror("Error", "Cannot create CSV file")
             except:
@@ -321,7 +341,7 @@ class ControlApp:
                 self.watchdog_count += 1
                 
                 # try again
-                self.id = self.master.after(1000, self.establishBaseline)
+                self.id = self.master.after(500, self.establishBaseline)
                 
             self.updateDisplay()
         else:
@@ -353,6 +373,43 @@ class ControlApp:
 
         return sqrt(value)
     
+    def checkTrigger(self):
+        self.id = None
+        if self.device_open:
+            try:
+                # Read the last scan result
+                read_result = self.board.a_in_scan_read(0, 0)
+                if read_result.triggered:
+                    self.trigger_errors += 1
+                    self.current_failures += 1
+                    self.last_trigger_error = True
+                self.board.a_in_scan_cleanup()
+
+                # Start the next scan
+                chan_mask = 2**self.num_channels - 1
+                self.board.a_in_scan_start(
+                    chan_mask, SCAN_SAMPLE_COUNT, 0)
+            except:
+                raise
+                self.board.a_in_scan_stop()
+                self.board.a_in_scan_cleanup()
+
+                self.software_errors += 1
+                self.current_failures += 1
+                self.watchdog_count += 1
+
+            self.id = self.master.after(500, self.updateInputs)
+        else:
+            # Open the device
+            self.initBoard()
+
+            # start a trigger test
+            chan_mask = 2**self.num_channels - 1
+            self.board.a_in_scan_start(
+                chan_mask, SCAN_SAMPLE_COUNT, OptionFlags.EXTTRIGGER)
+
+            self.id = self.master.after(500, self.checkTrigger)
+       
     def updateInputs(self):
         self.id = None
         if self.device_open:
@@ -360,10 +417,7 @@ class ControlApp:
             self.master.update()
             self.activity_id = self.master.after(100, self.activityBlink)
             
-            self.current_failures = 0
             logstr = datetime.datetime.now().strftime("%H:%M:%S") + ","
-            
-            error = False
             
             try:
                 # Read the last scan data
@@ -379,52 +433,29 @@ class ControlApp:
                                 (self.voltages[channel] < -self.voltage_limit)):
                             self.current_failures += 1
                             self.failures[channel] += 1
-                            error = True
-                """
-                # Calculate averages
-                averages = [0.0]*self.num_channels
-                for index in range(SCAN_SAMPLE_COUNT):
-                    for channel in range(self.num_channels):
-                        averages[channel] += read_result.data[
-                            index*self.num_channels + channel]
-                        
-                for channel in range(self.num_channels):
-                    averages[channel] /= SCAN_SAMPLE_COUNT
-                    self.voltages[channel] = averages[channel]*1e3
-                    if self.baseline_set == True:
-                        # compare to limits
-                        if ((self.voltages[channel] > self.voltage_limit) or
-                                (self.voltages[channel] < -self.voltage_limit)):
-                            self.current_failures += 1
-                            self.failures[channel] += 1
-                            error = True
-                """
-                if error:
-                    #print(read_result.running, read_result.hardware_overrun, read_result.buffer_overrun)
-                    """
-                    testfile = open("err.csv", "w+")
-                    for index in range(self.scan_count):
-                        errstr = (",".join(
-                               "{:.4f}".format(value) for value in read_result.data[
-                                   index*self.num_channels:index*self.num_channels+self.num_channels]) +
-                           ",\n")
-                        testfile.write(errstr)
-                    testfile.close()
-                    """        
                     
                 self.board.a_in_scan_cleanup()
 
                 # Start the next scan
+                #chan_mask = 2**self.num_channels - 1
+                #self.board.a_in_scan_start(
+                #    chan_mask, SCAN_SAMPLE_COUNT, 0)
+
+                # start a trigger test
                 chan_mask = 2**self.num_channels - 1
                 self.board.a_in_scan_start(
-                    chan_mask, SCAN_SAMPLE_COUNT, 0)
+                    chan_mask, SCAN_SAMPLE_COUNT, OptionFlags.EXTTRIGGER)
                 
                 self.watchdog_count = 0
                             
                 logstr += (",".join(
-                               "{:.1f}".format(value) for value in self.voltages[:self.num_channels]) +
-                           ",\n")
-                
+                               "{:.1f}".format(value) for value in self.voltages[:self.num_channels]))
+                if self.last_trigger_error:
+                    logstr += ",Trigger error\n"
+                else:
+                    logstr += ",\n"
+
+                self.last_trigger_error = False
             except:
                 raise
                 self.board.a_in_scan_stop()
@@ -433,7 +464,7 @@ class ControlApp:
                 self.software_errors += 1
                 self.current_failures += 1
                 self.watchdog_count += 1
-                logstr += ",,,,,,,,Software error\n"
+                logstr += ",,Software error\n"
 
             self.csvfile.write(logstr)
             self.test_count += 1
@@ -447,14 +478,23 @@ class ControlApp:
                 self.ready_led.set(0)
                 self.master.after(500, self.updateInputs)
             else:
-                # schedule another update in 1 s
-                self.id = self.master.after(1000, self.updateInputs)
+                # schedule another update
+                #self.id = self.master.after(1000, self.updateInputs)
+                # start the trigger test
+                self.id = self.master.after(500, self.checkTrigger)
         else:
             # Open the device
             self.initBoard()
             # schedule another attempt
-            self.id = self.master.after(500, self.updateInputs)
-       
+            #self.id = self.master.after(500, self.updateInputs)
+
+            # start a trigger test
+            chan_mask = 2**self.num_channels - 1
+            self.board.a_in_scan_start(
+                chan_mask, SCAN_SAMPLE_COUNT, OptionFlags.EXTTRIGGER)
+
+            self.id = self.master.after(500, self.checkTrigger)
+        
     def updateDisplay(self):
         for channel in range(mcc172.info().NUM_AI_CHANNELS):
             self.voltage_labels[channel].config(
@@ -468,7 +508,10 @@ class ControlApp:
         else:
             self.inst_pass_led.set(1)
         #self.pass_id = self.master.after(500, self.passBlink)
+        self.current_failures = 0
             
+        self.trigger_error_label.config(
+            text="{}".format(self.trigger_errors))
         self.software_error_label.config(
             text="{}".format(self.software_errors))
         self.test_count_label.config(text="{}".format(self.test_count))
