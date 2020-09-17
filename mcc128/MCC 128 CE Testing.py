@@ -23,7 +23,7 @@ DEFAULT_V_LIMIT = 3.5     # mV
 SCAN_SAMPLE_COUNT = 5000  # keep it < 1/2s 
 SCAN_RATE = 12500         # Hz
 TEST_MODE = AnalogInputMode.SE
-TEST_RANGE = AnalogInputRange.BIP_2V
+TEST_RANGE = AnalogInputRange.BIP_1V
 
 class LED(Frame):
     def __init__(self, parent, size=10, **options):
