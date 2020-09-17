@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-    MCC 172 CE Test application
+    MCC 128 CE Test application
 
     Purpose:
-        Exercise the MCC 172 for emissions / immunity testing
+        Exercise the MCC 128 for emissions / immunity testing
 
     Description:
         This app reads and displays the input voltages.
 """
-from daqhats import mcc172, SourceType, TriggerModes, OptionFlags
+from daqhats import mcc128, SourceType, AnalogInputMode, AnalogInputRange, TriggerModes, OptionFlags
 from tkinter import *
 import datetime
 from tkinter import messagebox
@@ -19,9 +19,11 @@ import os
 from tkinter.ttk import *
 #import tkinter.font
 
-DEFAULT_V_LIMIT = 4.985    # mV
-SCAN_SAMPLE_COUNT = 20000  # keep it < 1/2s 
-SCAN_RATE = 51200          # Hz
+DEFAULT_V_LIMIT = 3.5     # mV
+SCAN_SAMPLE_COUNT = 5000  # keep it < 1/2s 
+SCAN_RATE = 12500         # Hz
+TEST_MODE = AnalogInputMode.SE
+TEST_RANGE = AnalogInputRange.BIP_2V
 
 class LED(Frame):
     def __init__(self, parent, size=10, **options):
@@ -59,14 +61,15 @@ class ControlApp:
     
     def __init__(self, master):
         self.master = master
-        master.title("MCC 172 CE Test")
+        master.title("MCC 128 CE Test")
     
         # Initialize variables
         self.device_open = False
         self.board = None
         self.voltage_limit = DEFAULT_V_LIMIT
-        self.voltages = [0.0]*mcc172.info().NUM_AI_CHANNELS
-        self.failures = [0]*mcc172.info().NUM_AI_CHANNELS
+        self.max_channels = mcc128.info().NUM_AI_CHANNELS[TEST_MODE]
+        self.voltages = [0.0]*self.max_channels
+        self.failures = [0]*self.max_channels
         self.current_failures = 0
         self.test_count = 0
         self.trigger_errors = 0
@@ -77,7 +80,9 @@ class ControlApp:
         self.csvfile = None
         self.id = None
         self.activity_id = None
-        self.num_channels = mcc172.info().NUM_AI_CHANNELS
+        self.num_channels = self.max_channels
+        self.scan_rate = SCAN_RATE
+        self.scan_count = SCAN_SAMPLE_COUNT
 
         # GUI Setup
 
@@ -122,12 +127,32 @@ class ControlApp:
                              sticky="NEW", padx=3, pady=3)
 
         # Test widgets
+        self.test_frame = LabelFrame(master, text="Test setup")
+        self.test_frame.grid(row=0, column=1, rowspan=2,
+                             sticky="NEW", padx=3, pady=3)
+
+        # Test widgets
+        label = Label(self.test_frame, text="# Channels:")
+        label.grid(row=0, column=0, padx=3, pady=3, sticky="E")
+        chan_values = list(range(1, self.max_channels+1))
+        self.chan_combo = Combobox(self.test_frame, values=chan_values, width=8,
+                                   justify="right")
+        self.chan_combo.set(self.max_channels)
+        self.chan_combo.bind("<<ComboboxSelected>>", self.channelsChanged)
+        self.chan_combo.grid(row=0, column=1, 
+                             padx=3, pady=3, sticky="NSEW")
+        
         self.start_button = Button(self.test_frame, text="Start", 
                                   command=self.startTest)
         self.start_button.grid(row=0, column=2, padx=3, pady=3)
         
         label = Label(self.test_frame, text="Sample rate:")
         label.grid(row=1, column=0, padx=3, pady=3, sticky="E")
+        self.sample_rate = IntVar(value=12500)
+        self.sample_rate_widget = Spinbox(
+            self.test_frame, from_=1, to=12500, width=8,
+            textvariable=self.sample_rate, justify="right")
+        self.sample_rate_widget.grid(row=1, column=1, padx=3, pady=3, sticky="NSEW")
 
         style = Style()
         style.configure("C.TButton", foreground='red')
@@ -139,7 +164,7 @@ class ControlApp:
         self.watchdog_check = Checkbutton(
             self.test_frame, text="Use watchdog", variable=v)
         self.watchdog_check.var = v
-        self.watchdog_check.grid(row=0, column=0, columnspan=2, padx=3, pady=3,
+        self.watchdog_check.grid(row=2, column=0, columnspan=2, padx=3, pady=3,
                                  sticky="E")
 
         self.reset_button = Button(self.test_frame, text="Reset",
@@ -148,20 +173,20 @@ class ControlApp:
 
 
         label = Label(self.test_frame, text="Pass/fail (latch):")
-        label.grid(row=1, column=0, padx=3, pady=3, sticky="E")
+        label.grid(row=3, column=0, padx=3, pady=3, sticky="E")
         self.pass_led = LED(self.test_frame, size=20)
-        self.pass_led.grid(row=1, column=1, padx=3, pady=3)
+        self.pass_led.grid(row=3, column=1, padx=3, pady=3)
 
         label = Label(self.test_frame, text="Pass/fail (inst):")
-        label.grid(row=2, column=0, padx=3, pady=3, sticky="E")
+        label.grid(row=4, column=0, padx=3, pady=3, sticky="E")
         self.inst_pass_led = LED(self.test_frame, size=20)
-        self.inst_pass_led.grid(row=2, column=1, padx=3, pady=3)
+        self.inst_pass_led.grid(row=4, column=1, padx=3, pady=3)
 
         label = Label(self.test_frame, text="Test count:")
-        label.grid(row=3, column=0, padx=3, pady=3, sticky="E")
+        label.grid(row=5, column=0, padx=3, pady=3, sticky="E")
         self.test_count_label = Label(self.test_frame, width=8,
                                       text="0", relief=SUNKEN, anchor=E)
-        self.test_count_label.grid(row=3, column=1, padx=3, pady=3)
+        self.test_count_label.grid(row=5, column=1, padx=3, pady=3)
         
 
         # Voltage Frame
@@ -186,7 +211,7 @@ class ControlApp:
         self.voltage_labels = []
         self.failure_labels = []
         
-        for index in range(mcc172.info().NUM_AI_CHANNELS):
+        for index in range(self.max_channels):
             # Labels
             label = Label(self.volt_frame, text="{}".format(index))
             label.grid(row=index+2, column=0, padx=3, pady=3)
@@ -207,7 +232,7 @@ class ControlApp:
             
         # Trigger Frame
         self.trigger_frame = LabelFrame(master, text="Trigger Input")
-        self.trigger_frame.grid(row=2, column=1, sticky="NSEW", padx=3, pady=3)
+        self.trigger_frame.grid(row=2, column=1, sticky="NEW", padx=3, pady=3)
 
         label = Label(self.trigger_frame, text="Failures:")
         label.grid(row=0, column=0, padx=3, pady=3, sticky="E")
@@ -228,24 +253,16 @@ class ControlApp:
     def initBoard(self):
         # Try to initialize the device
         try:
-            self.board = mcc172(0)
+            self.board = mcc128(0)
             
             serial = self.board.serial()
             self.serial_number.set(serial)
             
-            # turn off IEPE
-            self.board.iepe_config_write(0, 0)
-            self.board.iepe_config_write(1, 0)
+            # set mode and range
+            self.board.a_in_mode_write(TEST_MODE)
+            self.board.a_in_range_write(TEST_RANGE)
             
-            # set ADC clock rate
-            self.board.a_in_clock_config_write(SourceType.LOCAL, SCAN_RATE)
-            sync = False
-            while not sync:
-                stat = self.board.a_in_clock_config_read()
-                sync = stat.synchronized
-                sleep(0.1)
-
-            self.board.trigger_config(SourceType.LOCAL, TriggerModes.RISING_EDGE)
+            self.board.trigger_mode(TriggerModes.RISING_EDGE)
             
             self.ready_led.set(1)
             self.device_open = True
@@ -253,14 +270,37 @@ class ControlApp:
             self.software_errors += 1
             self.current_failures += 1
    
+    def channelsChanged(self, _event):
+        self.num_channels = int(self.chan_combo.get())
+        # enable/disable controls
+        for index in range(0, self.num_channels):
+            self.voltage_labels[index].configure(state=NORMAL)
+            self.failure_labels[index].configure(state=NORMAL)
+        for index in range(self.num_channels, self.max_channels):
+            self.voltage_labels[index].configure(state=DISABLED)
+            self.failure_labels[index].configure(state=DISABLED)
+            
+        # set new sample rate max
+        rate_max = int(100000/self.num_channels)
+        self.sample_rate_widget.configure(to=rate_max)
+        if self.sample_rate.get() > rate_max:
+            self.sample_rate.set(rate_max)
+        
     def startTest(self):
         self.resetTest()
+        # get control values
+        self.scan_rate = self.sample_rate.get()
+        self.scan_count = int(self.scan_rate / 2.2)
+        if self.scan_count == 0:
+            self.scan_count = 1
         
         self.master.after(500, self.establishBaseline)
         # disable controls
         self.start_button.configure(state=DISABLED)
         self.reset_button.configure(state=DISABLED)
         self.stop_button.configure(state=NORMAL)
+        self.chan_combo.configure(state=DISABLED)
+        self.sample_rate_widget.configure(state=DISABLED)
         self.watchdog_check.configure(state=DISABLED)
     
     def stopTest(self):
@@ -275,6 +315,8 @@ class ControlApp:
         self.start_button.configure(state=NORMAL)
         self.reset_button.configure(state=NORMAL)
         self.stop_button.configure(state=DISABLED)
+        self.chan_combo.configure(state=NORMAL)
+        self.sample_rate_widget.configure(state=NORMAL)
         self.watchdog_check.configure(state=NORMAL)
     
     def resetTest(self):
@@ -292,8 +334,8 @@ class ControlApp:
             
         self.board = None
         self.device_open = False
-        self.voltages = [0.0]*mcc172.info().NUM_AI_CHANNELS
-        self.failures = [0]*mcc172.info().NUM_AI_CHANNELS
+        self.voltages = [0.0]*self.max_channels
+        self.failures = [0]*self.max_channels
         self.test_count = 0
         self.software_errors = 0
         self.trigger_errors = 0
@@ -322,7 +364,7 @@ class ControlApp:
                 # Start the first scan
                 chan_mask = 2**self.num_channels - 1
                 self.board.a_in_scan_start(
-                    chan_mask, SCAN_SAMPLE_COUNT, 0)
+                    chan_mask, self.scan_count, self.scan_rate, 0)
                 
                 self.baseline_set = True
                 self.watchdog_count = 0
@@ -335,7 +377,7 @@ class ControlApp:
             except FileNotFoundError:
                 messagebox.showerror("Error", "Cannot create CSV file")
             except:
-                #raise
+                raise
                 self.software_errors += 1
                 self.current_failures += 1
                 self.watchdog_count += 1
@@ -354,24 +396,14 @@ class ControlApp:
         if not os.path.isdir('./data'):
             # create the data directory
             os.mkdir('./data')
-        filename = "./data/mcc172_test_" + datetime.datetime.now().strftime(
+        filename = "./data/mcc128_test_" + datetime.datetime.now().strftime(
             "%d-%m-%Y_%H-%M-%S") + ".csv"
         self.csvfile = open(filename, 'w')
         
         mystr = ("Time," + ",".join("Ch {}".format(channel) for channel in
-                                   range(mcc172.info().NUM_AI_CHANNELS)) +
+                                   range(self.num_channels)) +
                  ",Status\n")
         self.csvfile.write(mystr)
-    
-    def calc_rms(self, data, channel, num_channels, num_samples_per_channel):
-        """ Calculate RMS value from a block of samples. """
-        value = 0.0
-        index = channel
-        for _i in range(num_samples_per_channel):
-            value += (data[index] * data[index]) / num_samples_per_channel
-            index += num_channels
-
-        return sqrt(value)
     
     def checkTrigger(self):
         self.id = None
@@ -388,7 +420,7 @@ class ControlApp:
                 # Start the next scan
                 chan_mask = 2**self.num_channels - 1
                 self.board.a_in_scan_start(
-                    chan_mask, SCAN_SAMPLE_COUNT, 0)
+                    chan_mask, self.scan_count, self.scan_rate, 0)
             except:
                 #raise
                 self.board.a_in_scan_stop()
@@ -406,7 +438,7 @@ class ControlApp:
             # start a trigger test
             chan_mask = 2**self.num_channels - 1
             self.board.a_in_scan_start(
-                chan_mask, SCAN_SAMPLE_COUNT, OptionFlags.EXTTRIGGER)
+                chan_mask, self.scan_count, self.scan_rate, OptionFlags.EXTTRIGGER)
 
             self.id = self.master.after(500, self.checkTrigger)
        
@@ -421,19 +453,25 @@ class ControlApp:
             
             try:
                 # Read the last scan data
-                read_result = self.board.a_in_scan_read(SCAN_SAMPLE_COUNT, -1)
+                read_result = self.board.a_in_scan_read(self.scan_count, -1)
                 
-                # Calculate RMS values
+                # Calculate averages
+                averages = [0.0]*self.num_channels
+                for index in range(self.scan_count):
+                    for channel in range(self.num_channels):
+                        averages[channel] += read_result.data[
+                            index*self.num_channels + channel]
+                        
                 for channel in range(self.num_channels):
-                    self.voltages[channel] = self.calc_rms(
-                        read_result.data, channel, self.num_channels, SCAN_SAMPLE_COUNT) * 1e3
+                    averages[channel] /= self.scan_count
+                    self.voltages[channel] = averages[channel]*1e3
                     if self.baseline_set == True:
                         # compare to limits
                         if ((self.voltages[channel] > self.voltage_limit) or
                                 (self.voltages[channel] < -self.voltage_limit)):
                             self.current_failures += 1
                             self.failures[channel] += 1
-                    
+
                 self.board.a_in_scan_cleanup()
 
                 # Start the next scan
@@ -444,7 +482,7 @@ class ControlApp:
                 # start a trigger test
                 chan_mask = 2**self.num_channels - 1
                 self.board.a_in_scan_start(
-                    chan_mask, SCAN_SAMPLE_COUNT, OptionFlags.EXTTRIGGER)
+                    chan_mask, self.scan_count, self.scan_rate, OptionFlags.EXTTRIGGER)
                 
                 self.watchdog_count = 0
                             
@@ -491,12 +529,12 @@ class ControlApp:
             # start a trigger test
             chan_mask = 2**self.num_channels - 1
             self.board.a_in_scan_start(
-                chan_mask, SCAN_SAMPLE_COUNT, OptionFlags.EXTTRIGGER)
+                chan_mask, self.scan_count, self.scan_rate, OptionFlags.EXTTRIGGER)
 
             self.id = self.master.after(500, self.checkTrigger)
         
     def updateDisplay(self):
-        for channel in range(mcc172.info().NUM_AI_CHANNELS):
+        for channel in range(self.max_channels):
             self.voltage_labels[channel].config(
                 text="{:.1f}".format(self.voltages[channel]))
             self.failure_labels[channel].config(
